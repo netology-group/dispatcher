@@ -9,19 +9,34 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tide = { version = "0.15.0", default_features = false, features = ["h1-server", "cookies", "sessions"]}
+tide = { version = "0.15.0", default_features = false, features = ["h1-server", "cookies", "sessions"] }
 async-std = { version = "1.8.0", features = ["attributes"] }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 # we use sqlx 0.4 because sqlx 0.5 requires pulling tls impl into our svc-* crates
 # see https://github.com/launchbadge/sqlx/issues/996
-sqlx = { version = "0.4", features = ["offline", "postgres", "macros", "uuid", "chrono", "json", "bigdecimal", "runtime-async-std-rustls"] }
+sqlx = { version = "0.4", features = [
+    "offline",
+    "postgres",
+    "macros",
+    "uuid",
+    "chrono",
+    "json",
+    "bigdecimal",
+    "runtime-async-std-rustls",
+] }
 serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"
 svc-agent = { version = "0.17", features = ["sqlx"] }
 svc-authn = { version = "0.6", features = ["jose", "sqlx"] }
-svc-error = { version = "0.1", features = ["svc-agent", "svc-authn", "svc-authz", "sentry-extension", "sqlx"] }
+svc-error = { version = "0.1", features = [
+    "svc-agent",
+    "svc-authn",
+    "svc-authz",
+    "sentry-extension",
+    "sqlx",
+] }
 svc-authz = "0.10"
 sentry = "0.18.1"
 config = "0.10"
@@ -39,7 +54,7 @@ rand = "0.7"
 quaint = { version = "0.1", features = ["uuid-0_8", "chrono-0_4"] }
 isahc = "1.1.0"
 http = "0.2"
-url = { version = "2.2.1", features = [ "serde" ] }
+url = { version = "2.2.1", features = ["serde"] }
 signal-hook = "0.3.6"
 signal-hook-async-std = "0.2.1"
 pin-utils = "0.1.0"

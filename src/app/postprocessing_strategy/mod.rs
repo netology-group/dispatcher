@@ -7,11 +7,15 @@ use serde_derive::Deserialize;
 use svc_agent::AgentId;
 use uuid::Uuid;
 
-use crate::app::AppContext;
-use crate::clients::event::RoomAdjustResult;
-use crate::clients::tq::TaskCompleteResult;
-use crate::db::class::{ClassType, Object as Class};
-use crate::db::recording::Segments;
+use crate::{app::AppContext, clients::tq::TranscodeMinigroupToHlsSuccess};
+use crate::{
+    clients::tq::TranscodeStreamToHlsSuccess,
+    db::class::{ClassType, Object as Class},
+};
+use crate::{
+    clients::{event::RoomAdjustResult, tq::ConvertMjrDumpsToStreamSuccess},
+    db::recording::Segments,
+};
 
 use minigroup::MinigroupPostprocessingStrategy;
 use webinar::WebinarPostprocessingStrategy;
@@ -31,12 +35,13 @@ pub(crate) fn get(
 
 #[async_trait]
 pub(crate) trait PostprocessingStrategy {
-    async fn handle_upload(&self, rtcs: Vec<RtcUploadResult>) -> Result<()>;
+    async fn handle_mjr_dumps_upload(&self, rtcs: Vec<MjrDumpsUploadResult>) -> Result<()>;
+    async fn handle_stream_upload(&self, stream: UploadedStream) -> Result<()>;
     async fn handle_adjust(&self, room_adjust_result: RoomAdjustResult) -> Result<()>;
 
     async fn handle_transcoding_completion(
         &self,
-        completion_result: TaskCompleteResult,
+        completion_result: TranscodeSuccess,
     ) -> Result<()>;
 }
 
@@ -45,25 +50,48 @@ pub(crate) trait PostprocessingStrategy {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "status")]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum RtcUploadResult {
-    Ready(RtcUploadReadyData),
-    Missing(RtcUploadMissingData),
+pub(crate) enum MjrDumpsUploadResult {
+    Ready(MjrDumpsUploadReadyData),
+    Missing(MjrDumpsUploadMissingData),
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct RtcUploadReadyData {
+pub(crate) struct MjrDumpsUploadReadyData {
     pub(self) id: Uuid,
-    pub(self) uri: String,
-    #[serde(deserialize_with = "chrono::serde::ts_milliseconds::deserialize")]
-    pub(self) started_at: DateTime<Utc>,
-    #[serde(deserialize_with = "crate::db::recording::serde::segments::deserialize")]
-    pub(self) segments: Segments,
     pub(self) created_by: AgentId,
+    pub(self) uri: String,
+    pub(self) mjr_dumps_uris: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct RtcUploadMissingData {
+pub(crate) struct MjrDumpsUploadMissingData {
     pub(self) id: Uuid,
+}
+
+#[derive(Debug)]
+pub enum TranscodeSuccess {
+    TranscodeStreamToHls(TranscodeStreamToHlsSuccess),
+    TranscodeMinigroupToHls(TranscodeMinigroupToHlsSuccess),
+}
+
+#[derive(Debug)]
+pub struct UploadedStream {
+    pub id: Uuid,
+    pub uri: String,
+    pub started_at: DateTime<Utc>,
+    pub segments: Segments,
+}
+
+impl UploadedStream {
+    pub fn from_convert_result(result: &ConvertMjrDumpsToStreamSuccess) -> Result<Self> {
+        let (started_at, segments) = shared_helpers::parse_segments(&result.segments)?;
+        Ok(Self {
+            id: result.stream_id,
+            uri: result.stream_uri.clone(),
+            started_at,
+            segments,
+        })
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////

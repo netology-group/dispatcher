@@ -33,6 +33,11 @@ pub enum Task {
         streams: Vec<TranscodeMinigroupToHlsStream>,
         host_stream_id: Uuid,
     },
+    ConvertMjrDumpsToStream {
+        mjr_dumps_uris: Vec<String>,
+        stream_uri: String,
+        stream_id: Uuid,
+    },
 }
 
 impl Task {
@@ -40,6 +45,7 @@ impl Task {
         match self {
             Self::TranscodeStreamToHls { .. } => "transcode-stream-to-hls",
             Self::TranscodeMinigroupToHls { .. } => "transcode-minigroup-to-hls",
+            Self::ConvertMjrDumpsToStream { .. } => "convert-mjr-dumps-to-stream",
         }
     }
 }
@@ -93,15 +99,9 @@ impl TranscodeMinigroupToHlsStream {
 
 #[derive(Debug, Deserialize)]
 pub struct TaskComplete {
-    tags: Option<JsonValue>,
+    pub tags: Option<JsonValue>,
     #[serde(flatten)]
-    result: TaskCompleteResult,
-}
-
-impl TaskComplete {
-    pub fn tags(&self) -> Option<&JsonValue> {
-        self.tags.as_ref()
-    }
+    pub result: TaskCompleteResult,
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,7 +110,7 @@ pub enum TaskCompleteResult {
     #[serde(rename = "success")]
     Success(TaskCompleteSuccess),
     #[serde(rename = "failure")]
-    Failure { error: JsonValue },
+    Failure { error: Option<JsonValue> },
 }
 
 impl From<TaskComplete> for TaskCompleteResult {
@@ -126,6 +126,15 @@ pub enum TaskCompleteSuccess {
     TranscodeStreamToHls(TranscodeStreamToHlsSuccess),
     #[serde(rename = "transcode-minigroup-to-hls")]
     TranscodeMinigroupToHls(TranscodeMinigroupToHlsSuccess),
+    #[serde(rename = "convert-mjr-dumps-to-stream")]
+    ConvertMjrDumpsToStream(ConvertMjrDumpsToStreamSuccess),
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConvertMjrDumpsToStreamSuccess {
+    pub stream_id: Uuid,
+    pub stream_uri: String,
+    pub segments: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,6 +206,12 @@ impl TqClient for HttpTqClient {
         class: &crate::db::class::Object,
         task: Task,
     ) -> Result<(), ClientError> {
+        let route = format!(
+            "/api/v1/audiences/{}/tasks/{}",
+            class.audience(),
+            task.template().to_owned() + class.scope()
+        );
+
         let task = TaskPayload {
             audience: class.audience().to_owned(),
             tags: class
@@ -207,12 +222,6 @@ impl TqClient for HttpTqClient {
             template: task.template().into(),
             bindings: task,
         };
-
-        let route = format!(
-            "/api/v1/audiences/{}/tasks/{}",
-            class.audience(),
-            class.scope()
-        );
 
         let url = self.base_url.join(&route).map_err(|e| {
             ClientError::HttpError(format!(

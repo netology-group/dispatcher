@@ -4,7 +4,7 @@ use sqlx::postgres::PgConnection;
 use svc_agent::AgentId;
 use uuid::Uuid;
 
-use crate::db;
+use crate::db::{self, recording::Segments};
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -260,34 +260,48 @@ impl Chat {
 pub struct Recording {
     class_id: Uuid,
     rtc_id: Uuid,
-    stream_uri: String,
-    segments: db::recording::Segments,
+    stream_uri: Option<String>,
+    segments: Option<db::recording::Segments>,
     modified_segments: Option<db::recording::Segments>,
-    started_at: DateTime<Utc>,
+    started_at: Option<DateTime<Utc>>,
     adjusted_at: Option<DateTime<Utc>>,
     transcoded_at: Option<DateTime<Utc>>,
     created_by: AgentId,
 }
 
 impl Recording {
-    pub fn new(
-        class_id: Uuid,
-        rtc_id: Uuid,
-        stream_uri: String,
-        segments: db::recording::Segments,
-        started_at: DateTime<Utc>,
-        created_by: AgentId,
-    ) -> Self {
+    pub fn new(class_id: Uuid, rtc_id: Uuid, created_by: AgentId) -> Self {
         Self {
             class_id,
             rtc_id,
-            stream_uri,
-            segments,
+            stream_uri: None,
+            segments: None,
             modified_segments: None,
-            started_at,
+            started_at: None,
             adjusted_at: None,
             transcoded_at: None,
             created_by,
+        }
+    }
+
+    pub fn stream_uri(self, uri: String) -> Self {
+        Self {
+            stream_uri: Some(uri),
+            ..self
+        }
+    }
+
+    pub fn segments(self, segments: Segments) -> Self {
+        Self {
+            segments: Some(segments),
+            ..self
+        }
+    }
+
+    pub fn started_at(self, started_at: DateTime<Utc>) -> Self {
+        Self {
+            started_at: Some(started_at),
+            ..self
         }
     }
 
@@ -313,14 +327,8 @@ impl Recording {
     }
 
     pub async fn insert(self, conn: &mut PgConnection) -> db::recording::Object {
-        let mut q = db::recording::RecordingInsertQuery::new(
-            self.class_id,
-            self.rtc_id,
-            self.segments,
-            self.started_at,
-            self.stream_uri,
-            self.created_by,
-        );
+        let mut q =
+            db::recording::RecordingInsertQuery::new(self.class_id, self.rtc_id, self.created_by);
 
         if let Some(modified_segments) = self.modified_segments {
             q = q.modified_segments(modified_segments);
@@ -332,6 +340,18 @@ impl Recording {
 
         if let Some(transcoded_at) = self.transcoded_at {
             q = q.transcoded_at(transcoded_at);
+        }
+
+        if let Some(stream_uri) = self.stream_uri {
+            q = q.stream_uri(stream_uri);
+        }
+
+        if let Some(segments) = self.segments {
+            q = q.segments(segments);
+        }
+
+        if let Some(started_at) = self.started_at {
+            q = q.started_at(started_at);
         }
 
         q.execute(conn).await.expect("Failed to insert recording")

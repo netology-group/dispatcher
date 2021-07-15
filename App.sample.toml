@@ -30,6 +30,9 @@ api_version = "v1"
 
 [tq_client]
 base_url = "http://localhost:3000/"
+timeout = 5
+account_id = "event.dev.svc.example.org"
+api_version = "v1"
 
 [id_token]
 algorithm = "ES256"
@@ -45,3 +48,6 @@ reconnect_interval = 3
 
 [http]
 listener_address = "0.0.0.0:3000"
+
+[storage]
+base_url = "mqtt://0.0.0.0:1883"

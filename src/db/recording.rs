@@ -15,10 +15,10 @@ pub struct Object {
     id: Uuid,
     class_id: Uuid,
     rtc_id: Uuid,
-    stream_uri: String,
-    segments: Segments,
+    stream_uri: Option<String>,
+    segments: Option<Segments>,
     modified_segments: Option<Segments>,
-    started_at: DateTime<Utc>,
+    started_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     adjusted_at: Option<DateTime<Utc>>,
     transcoded_at: Option<DateTime<Utc>>,
@@ -32,20 +32,20 @@ impl Object {
         self.id
     }
 
-    pub fn stream_uri(&self) -> &str {
-        &self.stream_uri
+    pub fn stream_uri(&self) -> Option<&String> {
+        self.stream_uri.as_ref()
     }
 
     pub fn rtc_id(&self) -> Uuid {
         self.rtc_id
     }
 
-    pub fn started_at(&self) -> DateTime<Utc> {
+    pub fn started_at(&self) -> Option<DateTime<Utc>> {
         self.started_at
     }
 
-    pub fn segments(&self) -> &Segments {
-        &self.segments
+    pub fn segments(&self) -> Option<&Segments> {
+        self.segments.as_ref()
     }
 
     #[cfg(test)]
@@ -114,7 +114,7 @@ impl RecordingListQuery {
                 class_id,
                 rtc_id,
                 stream_uri,
-                segments AS "segments!: Segments",
+                segments AS "segments!: Option<Segments>",
                 modified_segments AS "modified_segments!: Option<Segments>",
                 started_at,
                 created_at,
@@ -137,9 +137,9 @@ impl RecordingListQuery {
 pub struct RecordingInsertQuery {
     class_id: Uuid,
     rtc_id: Uuid,
-    segments: Segments,
-    started_at: DateTime<Utc>,
-    stream_uri: String,
+    segments: Option<Segments>,
+    started_at: Option<DateTime<Utc>>,
+    stream_uri: Option<String>,
     modified_segments: Option<Segments>,
     adjusted_at: Option<DateTime<Utc>>,
     transcoded_at: Option<DateTime<Utc>>,
@@ -147,20 +147,13 @@ pub struct RecordingInsertQuery {
 }
 
 impl RecordingInsertQuery {
-    pub fn new(
-        class_id: Uuid,
-        rtc_id: Uuid,
-        segments: Segments,
-        started_at: DateTime<Utc>,
-        stream_uri: String,
-        created_by: AgentId,
-    ) -> Self {
+    pub fn new(class_id: Uuid, rtc_id: Uuid, created_by: AgentId) -> Self {
         Self {
             class_id,
             rtc_id,
-            segments,
-            started_at,
-            stream_uri,
+            segments: None,
+            started_at: None,
+            stream_uri: None,
             modified_segments: None,
             adjusted_at: None,
             transcoded_at: None,
@@ -192,6 +185,30 @@ impl RecordingInsertQuery {
         }
     }
 
+    #[cfg(test)]
+    pub fn stream_uri(self, uri: String) -> Self {
+        Self {
+            stream_uri: Some(uri),
+            ..self
+        }
+    }
+
+    #[cfg(test)]
+    pub fn segments(self, segments: Segments) -> Self {
+        Self {
+            segments: Some(segments),
+            ..self
+        }
+    }
+
+    #[cfg(test)]
+    pub fn started_at(self, started_at: DateTime<Utc>) -> Self {
+        Self {
+            started_at: Some(started_at),
+            ..self
+        }
+    }
+
     pub async fn execute(self, conn: &mut PgConnection) -> sqlx::Result<Object> {
         sqlx::query_as!(
             Object,
@@ -206,7 +223,7 @@ impl RecordingInsertQuery {
                 class_id,
                 rtc_id,
                 stream_uri,
-                segments AS "segments!: Segments",
+                segments AS "segments!: Option<Segments>",
                 started_at,
                 modified_segments AS "modified_segments!: Option<Segments>",
                 created_at,
@@ -218,7 +235,7 @@ impl RecordingInsertQuery {
             self.class_id,
             self.rtc_id,
             self.stream_uri,
-            self.segments as Segments,
+            self.segments as Option<Segments>,
             self.modified_segments as Option<Segments>,
             self.started_at,
             self.adjusted_at,
@@ -258,7 +275,7 @@ impl AdjustWebinarUpdateQuery {
                 class_id,
                 rtc_id,
                 stream_uri,
-                segments AS "segments!: Segments",
+                segments AS "segments!: Option<Segments>",
                 started_at,
                 modified_segments AS "modified_segments!: Option<Segments>",
                 created_at,
@@ -299,7 +316,7 @@ impl AdjustMinigroupUpdateQuery {
                 class_id,
                 rtc_id,
                 stream_uri,
-                segments AS "segments!: Segments",
+                segments AS "segments!: Option<Segments>",
                 started_at,
                 modified_segments AS "modified_segments!: Option<Segments>",
                 created_at,
@@ -338,7 +355,7 @@ impl TranscodingUpdateQuery {
                 class_id,
                 rtc_id,
                 stream_uri,
-                segments AS "segments!: Segments",
+                segments AS "segments!: Option<Segments>",
                 started_at,
                 modified_segments AS "modified_segments!: Option<Segments>",
                 created_at,
@@ -395,7 +412,7 @@ impl RecordingConvertInsertQuery {
                 class_id,
                 rtc_id,
                 stream_uri,
-                segments AS "segments!: Segments",
+                segments AS "segments!: Option<Segments>",
                 started_at,
                 modified_segments AS "modified_segments!: Option<Segments>",
                 created_at,
@@ -411,6 +428,67 @@ impl RecordingConvertInsertQuery {
             self.stream_uri,
             self.created_by as AgentId
 
+        )
+        .fetch_one(conn)
+        .await
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+pub struct StreamUploadUpdateQuery {
+    class_id: Uuid,
+    rtc_id: Uuid,
+    segments: Segments,
+    stream_uri: String,
+    started_at: DateTime<Utc>,
+}
+
+impl StreamUploadUpdateQuery {
+    pub fn new(
+        class_id: Uuid,
+        rtc_id: Uuid,
+        segments: Segments,
+        stream_uri: String,
+        started_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            class_id,
+            rtc_id,
+            segments,
+            stream_uri,
+            started_at,
+        }
+    }
+
+    pub async fn execute(self, conn: &mut PgConnection) -> sqlx::Result<Object> {
+        sqlx::query_as!(
+            Object,
+            r#"
+            UPDATE recording
+            SET segments = $3,
+                stream_uri = $4,
+                started_at = $5
+            WHERE class_id = $1  AND rtc_id = $2 AND deleted_at IS NULL
+            RETURNING
+                id,
+                class_id,
+                rtc_id,
+                stream_uri,
+                segments AS "segments!: Option<Segments>",
+                started_at,
+                modified_segments AS "modified_segments!: Option<Segments>",
+                created_at,
+                adjusted_at,
+                transcoded_at,
+                created_by AS "created_by: AgentId",
+                deleted_at
+            "#,
+            self.class_id,
+            self.rtc_id,
+            self.segments as Segments,
+            self.stream_uri,
+            self.started_at,
         )
         .fetch_one(conn)
         .await

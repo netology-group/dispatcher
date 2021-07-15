@@ -13,12 +13,13 @@ use uuid::Uuid;
 
 use crate::app::AppContext;
 use crate::clients::event::RoomAdjustResult;
-use crate::clients::tq::{
-    Task as TqTask, TaskCompleteResult, TaskCompleteSuccess, TranscodeStreamToHlsSuccess,
-};
 use crate::db::class::Object as Class;
+use crate::{
+    clients::tq::{Task as TqTask, TranscodeStreamToHlsSuccess},
+    db::recording::RecordingInsertQuery,
+};
 
-use super::{shared_helpers, RtcUploadResult};
+use super::{MjrDumpsUploadResult, TranscodeSuccess, UploadedStream};
 
 // TODO: make configurable for each audience.
 const PREROLL_OFFSET: i64 = 4018;
@@ -36,38 +37,31 @@ impl WebinarPostprocessingStrategy {
 
 #[async_trait]
 impl super::PostprocessingStrategy for WebinarPostprocessingStrategy {
-    async fn handle_upload(&self, rtcs: Vec<RtcUploadResult>) -> Result<()> {
-        let ready_rtcs = shared_helpers::extract_ready_rtcs(rtcs)?;
-
-        let rtc = ready_rtcs
-            .first()
-            .ok_or_else(|| anyhow!("Expected exactly 1 RTC"))?;
-
+    async fn handle_mjr_dumps_upload(&self, rtcs: Vec<MjrDumpsUploadResult>) -> Result<()> {
+        let mut ready_dumps = super::shared_helpers::extract_ready_dumps(rtcs)?;
+        if ready_dumps.len() != 1 {
+            return Err(anyhow!("Expected exactly 1 dump"));
+        }
+        let dump = ready_dumps.pop().unwrap();
         {
             let mut conn = self.ctx.get_conn().await?;
-
-            crate::db::recording::RecordingInsertQuery::new(
-                self.webinar.id(),
-                rtc.id,
-                rtc.segments.to_owned(),
-                rtc.started_at,
-                rtc.uri.to_owned(),
-                rtc.created_by.to_owned(),
-            )
-            .execute(&mut conn)
-            .await?;
+            RecordingInsertQuery::new(self.webinar.id(), dump.id, dump.created_by)
+                .execute(&mut conn)
+                .await?;
         }
-
         self.ctx
-            .event_client()
-            .adjust_room(
-                self.webinar.event_room_id(),
-                rtc.started_at,
-                rtc.segments.clone(),
-                PREROLL_OFFSET,
+            .tq_client()
+            .create_task(
+                &self.webinar,
+                TqTask::ConvertMjrDumpsToStream {
+                    mjr_dumps_uris: dump.mjr_dumps_uris,
+                    stream_uri: dump.uri,
+                    stream_id: dump.id,
+                },
             )
             .await
-            .context("Failed to adjust room")
+            .context("Failed to set mjr dumps convert task")?;
+        Ok(())
     }
 
     async fn handle_adjust(&self, room_adjust_result: RoomAdjustResult) -> Result<()> {
@@ -113,7 +107,15 @@ impl super::PostprocessingStrategy for WebinarPostprocessingStrategy {
                         &self.webinar,
                         TqTask::TranscodeStreamToHls {
                             stream_id: recording.rtc_id(),
-                            stream_uri: recording.stream_uri().to_string(),
+                            stream_uri: recording
+                                .stream_uri()
+                                .ok_or_else(|| {
+                                    anyhow!(
+                                        "Missing stream_uri in adjust for {}",
+                                        recording.rtc_id()
+                                    )
+                                })?
+                                .clone(),
                             event_room_id: Some(modified_room_id),
                             segments: Some(modified_segments),
                         },
@@ -129,17 +131,15 @@ impl super::PostprocessingStrategy for WebinarPostprocessingStrategy {
 
     async fn handle_transcoding_completion(
         &self,
-        completion_result: TaskCompleteResult,
+        completion_result: TranscodeSuccess,
     ) -> Result<()> {
         match completion_result {
-            TaskCompleteResult::Success(TaskCompleteSuccess::TranscodeStreamToHls(
-                TranscodeStreamToHlsSuccess {
-                    stream_duration,
-                    stream_id,
-                    stream_uri,
-                    event_room_id,
-                },
-            )) => {
+            TranscodeSuccess::TranscodeStreamToHls(TranscodeStreamToHlsSuccess {
+                stream_duration,
+                stream_id,
+                stream_uri,
+                event_room_id,
+            }) => {
                 let stream_duration = stream_duration.parse::<f64>()?.round() as u64;
 
                 {
@@ -173,17 +173,44 @@ impl super::PostprocessingStrategy for WebinarPostprocessingStrategy {
                     .publish(boxed_event)
                     .context("Failed to publish webinar.ready event")
             }
-            TaskCompleteResult::Success(success_result) => {
+            TranscodeSuccess::TranscodeMinigroupToHls(result) => {
                 bail!(
                     "Got transcoding success for an unexpected tq template; expected transcode-stream-to-hls for a webinar, id = {}, result = {:?}",
                     self.webinar.id(),
-                    success_result,
+                    result,
                 );
             }
-            TaskCompleteResult::Failure { error } => {
-                bail!("Transcoding failed: {}", error);
-            }
         }
+    }
+
+    async fn handle_stream_upload(&self, stream: UploadedStream) -> Result<()> {
+        let rtc = {
+            let mut conn = self.ctx.get_conn().await?;
+
+            crate::db::recording::StreamUploadUpdateQuery::new(
+                self.webinar.id(),
+                stream.id,
+                stream.segments,
+                stream.uri,
+                stream.started_at,
+            )
+            .execute(&mut conn)
+            .await?
+        };
+
+        self.ctx
+            .event_client()
+            .adjust_room(
+                self.webinar.event_room_id(),
+                rtc.started_at()
+                    .ok_or_else(|| anyhow!("Missing started at after upload"))?,
+                rtc.segments()
+                    .ok_or_else(|| anyhow!("Missing segments after upload"))?
+                    .clone(),
+                PREROLL_OFFSET,
+            )
+            .await
+            .context("Failed to adjust room")
     }
 }
 
