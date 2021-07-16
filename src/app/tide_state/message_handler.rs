@@ -43,12 +43,18 @@ impl MessageHandler {
     }
 
     pub async fn handle_event(&self, data: IncomingEvent<String>, topic: String) {
+        let label = data
+            .properties()
+            .label()
+            .map(|s| format!("Some({})", s))
+            .unwrap_or_else(|| "None".into());
         slog::info!(
             crate::LOG,
-            "Incoming event, label = {:?}, payload = {:?}, topic = {:?}",
-            data.properties().label(),
+            "Incoming event, label = {}, payload = {}, topic = {}",
+            &label,
             data.payload(),
-            topic
+            topic;
+            "label" => &label,
         );
 
         let audience: Option<&str> = topic
